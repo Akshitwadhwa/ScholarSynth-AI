@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+.env
+.env.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
+
+# IDEs and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Local databases and vector indexes
+*.db
+*.sqlite
+*.sqlite3
+data/chroma/
+chroma/
+
+# Downloaded models and training artifacts
+models/
+checkpoints/
+adapters/
+lora_adapters/
+wandb/
+runs/
+outputs/checkpoints/
+outputs/models/
+
+# Generated dataset artifacts
+data/*.csv
+data/*.jsonl
+data/*.parquet
+data/*.pkl
+data/pdfs/
+
+# Keep folder placeholders if you add them later
+!data/.gitkeep
+!outputs/.gitkeep
+!report/.gitkeep
+
+# Generated outputs
+outputs/*.csv
+outputs/*.md
+outputs/*.json
+outputs/*.jsonl
+
+# Keep source docs trackable if needed
+!README.md
+!report/final_report.md
