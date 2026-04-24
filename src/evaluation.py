@@ -19,13 +19,38 @@ def compute_rouge(reference: str, candidate: str) -> dict[str, float]:
     return {metric: value.fmeasure for metric, value in scores.items()}
 
 
-def compute_bertscore(reference: str, candidate: str) -> float:
-    _, _, f1 = bertscore([candidate], [reference], lang="en", verbose=False)
+def compute_bertscore(
+    reference: str,
+    candidate: str,
+    model_type: str | None = None,
+    num_layers: int | None = None,
+) -> float:
+    _, _, f1 = bertscore(
+        [candidate],
+        [reference],
+        lang="en",
+        model_type=model_type,
+        num_layers=num_layers,
+        verbose=False,
+    )
     return float(f1.mean())
 
 
-def evaluate_generation(reference: str, candidate: str) -> dict[str, float]:
-    scores = {"bleu": compute_bleu(reference, candidate), "bertscore_f1": compute_bertscore(reference, candidate)}
+def evaluate_generation(
+    reference: str,
+    candidate: str,
+    bertscore_model: str | None = None,
+    bertscore_num_layers: int | None = None,
+) -> dict[str, float]:
+    scores = {
+        "bleu": compute_bleu(reference, candidate),
+        "bertscore_f1": compute_bertscore(
+            reference,
+            candidate,
+            model_type=bertscore_model,
+            num_layers=bertscore_num_layers,
+        ),
+    }
     scores.update(compute_rouge(reference, candidate))
     return scores
 
