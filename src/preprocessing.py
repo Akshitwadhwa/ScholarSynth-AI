@@ -65,8 +65,8 @@ def preprocess_papers(raw_df: pd.DataFrame) -> pd.DataFrame:
 
 def split_dataset(
     df: pd.DataFrame,
-    train_ratio: float = 0.7,
-    val_ratio: float = 0.15,
+    train_ratio: float = 0.75,
+    val_ratio: float = 0.10,
     random_state: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     if df.empty:
@@ -185,8 +185,8 @@ def build_finetune_dataset(df: pd.DataFrame) -> list[dict]:
 
 def split_records(
     records: list[dict],
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
+    train_ratio: float = 0.75,
+    val_ratio: float = 0.10,
     random_state: int = 42,
 ) -> tuple[list[dict], list[dict], list[dict]]:
     if not records:
