@@ -76,14 +76,21 @@ class ChromaVectorStore:
         self.client = chromadb.PersistentClient(path=persist_dir)
         self.collection = self.client.get_or_create_collection(name="research_papers")
 
-    def index_chunks(self, df: pd.DataFrame, embedding_model: SentenceTransformer) -> None:
+    def index_chunks(
+        self,
+        df: pd.DataFrame,
+        embedding_model: SentenceTransformer,
+        batch_size: int = 512,
+    ) -> None:
         if df.empty:
             return
-        ids = df["chunk_id"].tolist()
-        documents = df["chunk_text"].tolist()
-        embeddings = embedding_model.encode(documents).tolist()
-        metadatas = df[["paper_id", "title", "topic", "source", "url"]].to_dict(orient="records")
-        self.collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
+        for start in range(0, len(df), batch_size):
+            batch_df = df.iloc[start : start + batch_size]
+            ids = batch_df["chunk_id"].tolist()
+            documents = batch_df["chunk_text"].tolist()
+            embeddings = embedding_model.encode(documents).tolist()
+            metadatas = batch_df[["paper_id", "title", "topic", "source", "url"]].to_dict(orient="records")
+            self.collection.upsert(ids=ids, documents=documents, embeddings=embeddings, metadatas=metadatas)
 
     def semantic_search(self, query: str, embedding_model: SentenceTransformer, top_k: int = 5) -> dict:
         query_embedding = embedding_model.encode([query]).tolist()
