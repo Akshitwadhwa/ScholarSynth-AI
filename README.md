@@ -39,20 +39,22 @@ Line counts include CSV headers where applicable.
 | `data/raw_papers.csv` | 5001 |
 | `data/raw_papers_checkpoint.csv` | 5019 |
 | `data/processed_papers.csv` | 10340 |
-| `data/train.csv` | 7238 |
-| `data/val.csv` | 1551 |
-| `data/test.csv` | 1553 |
+| `data/train.csv` | 7755 |
+| `data/val.csv` | 1035 |
+| `data/test.csv` | 1552 |
 | `data/finetune_dataset.jsonl` | 8631 |
-| `data/finetune_train.jsonl` | 6904 |
+| `data/finetune_train.jsonl` | 6473 |
 | `data/finetune_val.jsonl` | 863 |
-| `data/finetune_test.jsonl` | 864 |
+| `data/finetune_test.jsonl` | 1295 |
 
 Approximate actual dataset sizes:
 
 - Raw papers: 5,000
 - Processed chunks: 10,339
 - Fine-tuning examples: 8,631
-- Fine-tuning split: 6,904 train / 863 validation / 864 test
+- Chunk split: 7,754 train / 1,034 validation / 1,551 test
+- Fine-tuning split: 6,473 train / 863 validation / 1,295 test
+- Split ratio: 75% train / 10% validation / 15% test
 - Topics covered: 94
 - Source split: 4,673 arXiv papers and 327 Semantic Scholar papers
 - SQLite metadata rows: 5,000
