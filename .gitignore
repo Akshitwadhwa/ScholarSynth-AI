@@ -65,6 +65,8 @@ outputs/*.csv
 outputs/*.md
 outputs/*.json
 outputs/*.jsonl
+!outputs/baseline_200_comparison.md
+!outputs/error_analysis.md
 
 # Keep source docs trackable if needed
 !README.md

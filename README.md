@@ -21,13 +21,14 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 2. Paper retrieval pipeline implemented in `src/paper_search.py`.
 3. Dataset preprocessing, chunking, train/validation/test split, and fine-tuning dataset creation implemented in `src/preprocessing.py`.
 4. Data collection notebook completed and run: `notebooks/01_data_collection.ipynb`.
-5. SQLite metadata storage and ChromaDB vector indexing implemented in `src/vector_store.py`.
-6. Vector database notebook completed and run: `notebooks/02_vector_database.ipynb`.
-7. Semantic retrieval tested across LoRA, chatbots, RAG hallucination, long-context transformers, scholarly search, and literature review queries.
-8. RAG and agent scaffolding created in `src/rag_pipeline.py` and `src/agents.py`.
-9. Baseline evaluation module created in `src/baseline_eval.py`.
-10. 40-example baseline evaluation notebook created and executed: `notebooks/05_evalute_baseline.ipynb`.
-11. Generated baseline evaluation outputs are saved under `outputs/`.
+5. Large-scale 5000-paper collection added via `src/large_data_collection.py` and `notebooks/06_large_data_collection_5000.ipynb`.
+6. SQLite metadata storage and ChromaDB vector indexing implemented in `src/vector_store.py`.
+7. Vector database rebuilt for the 5000-paper dataset.
+8. Semantic retrieval tested across LoRA, chatbots, RAG hallucination, long-context transformers, scholarly search, and literature review queries.
+9. RAG and agent scaffolding created in `src/rag_pipeline.py` and `src/agents.py`.
+10. Baseline evaluation module created in `src/baseline_eval.py`.
+11. 200-example baseline evaluation completed.
+12. Generated baseline evaluation outputs are saved under `outputs/`.
 
 ## Current Dataset Status
 
@@ -35,26 +36,31 @@ Line counts include CSV headers where applicable.
 
 | File | Rows / Lines |
 | --- | ---: |
-| `data/raw_papers.csv` | 449 |
-| `data/processed_papers.csv` | 929 |
-| `data/train.csv` | 650 |
-| `data/val.csv` | 140 |
-| `data/test.csv` | 141 |
-| `data/finetune_dataset.jsonl` | 1566 |
-| `data/finetune_train.jsonl` | 1252 |
-| `data/finetune_val.jsonl` | 157 |
-| `data/finetune_test.jsonl` | 157 |
+| `data/raw_papers.csv` | 5001 |
+| `data/raw_papers_checkpoint.csv` | 5019 |
+| `data/processed_papers.csv` | 10340 |
+| `data/train.csv` | 7238 |
+| `data/val.csv` | 1551 |
+| `data/test.csv` | 1553 |
+| `data/finetune_dataset.jsonl` | 8631 |
+| `data/finetune_train.jsonl` | 6904 |
+| `data/finetune_val.jsonl` | 863 |
+| `data/finetune_test.jsonl` | 864 |
 
 Approximate actual dataset sizes:
 
-- Raw papers: 448
-- Processed chunks: 928
-- Fine-tuning examples: 1,566
-- Fine-tuning split: 1,252 train / 157 validation / 157 test
+- Raw papers: 5,000
+- Processed chunks: 10,339
+- Fine-tuning examples: 8,631
+- Fine-tuning split: 6,904 train / 863 validation / 864 test
+- Topics covered: 94
+- Source split: 4,673 arXiv papers and 327 Semantic Scholar papers
+- SQLite metadata rows: 5,000
+- ChromaDB indexed chunks: 10,339
 
 ## Baseline Evaluation Results
 
-The latest baseline evaluation was run on 40 balanced examples using:
+The latest baseline evaluation was run on 200 balanced examples using:
 
 - `pretrained`: plain `flan-t5-base`
 - `prompt_engineered`: structured prompt using the same `flan-t5-base`
@@ -62,18 +68,19 @@ The latest baseline evaluation was run on 40 balanced examples using:
 
 Results are saved in:
 
-- `outputs/baseline_40_metrics.csv`
-- `outputs/baseline_40_generations.csv`
-- `outputs/baseline_40_comparison_table.csv`
-- `outputs/baseline_40_comparison.md`
+- `outputs/baseline_200_eval_data.csv`
+- `outputs/baseline_200_metrics.csv`
+- `outputs/baseline_200_generations.csv`
+- `outputs/baseline_200_comparison_table.csv`
+- `outputs/baseline_200_comparison.md`
 
 ### Aggregate Comparison Table
 
 | Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | BERTScore F1 |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| pretrained | 0.0126 | 0.1926 | 0.0788 | 0.1515 | 0.7770 |
-| rag_system | 0.0034 | 0.1553 | 0.0549 | 0.1177 | 0.7627 |
-| prompt_engineered | 0.0031 | 0.1204 | 0.0579 | 0.1045 | 0.7447 |
+| pretrained | 0.0117 | 0.2100 | 0.1011 | 0.1675 | 0.7849 |
+| rag_system | 0.0116 | 0.1649 | 0.0749 | 0.1355 | 0.7632 |
+| prompt_engineered | 0.0026 | 0.1384 | 0.0727 | 0.1200 | 0.7537 |
 
 Interpretation:
 
@@ -96,9 +103,11 @@ data/finetune_test.jsonl
 data/papers.db
 data/chroma/
 outputs/retrieval_examples.csv
-outputs/baseline_40_comparison.md
-outputs/baseline_40_metrics.csv
-outputs/baseline_40_generations.csv
+outputs/baseline_200_eval_data.csv
+outputs/baseline_200_comparison.md
+outputs/baseline_200_comparison_table.csv
+outputs/baseline_200_metrics.csv
+outputs/baseline_200_generations.csv
 ```
 
 Note: generated data, databases, model artifacts, and vector indexes are ignored by `.gitignore` to avoid committing large files.
@@ -124,7 +133,9 @@ project/
 │   ├── 02_vector_database.ipynb
 │   ├── 03_baseline_comparison.ipynb
 │   ├── 04_peft_finetuning.ipynb
-│   └── 05_evalute_baseline.ipynb
+│   ├── 04_peft_finetuning_colab.ipynb
+│   ├── 05_evalute_baseline.ipynb
+│   └── 06_large_data_collection_5000.ipynb
 ├── src/
 │   ├── paper_search.py
 │   ├── preprocessing.py
@@ -181,10 +192,10 @@ Run Streamlit app:
 streamlit run app.py
 ```
 
-Run the 40-example baseline evaluation from Python:
+Run the 200-example baseline evaluation from Python:
 
 ```bash
-python -c "from src.baseline_eval import run_baseline_evaluation; metrics, aggregate, generations = run_baseline_evaluation(sample_size=40); print(aggregate.round(4).to_string(index=False))"
+python -c "from src.baseline_eval import run_baseline_evaluation; metrics, aggregate, generations = run_baseline_evaluation(sample_size=200); print(aggregate.round(4).to_string(index=False))"
 ```
 
 Execute the baseline evaluation notebook and save outputs into the notebook:
