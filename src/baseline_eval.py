@@ -135,8 +135,13 @@ def run_baseline_evaluation(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    output_prefix = f"baseline_{sample_size}"
 
     examples = select_balanced_examples(load_jsonl(finetune_test_path), sample_size=sample_size)
+    eval_data_df = pd.DataFrame(examples)
+    eval_data_df.insert(0, "example_id", range(1, len(eval_data_df) + 1))
+    eval_data_df.to_csv(output_dir / f"{output_prefix}_eval_data.csv", index=False)
+
     embedding_model = load_embedding_model()
     vector_store = ChromaVectorStore(str(chroma_dir))
     generator = RagGenerator(model_name=model_name)
@@ -172,7 +177,7 @@ def run_baseline_evaluation(
             )
 
     generations_df = pd.DataFrame(generation_rows)
-    generations_path = output_dir / "baseline_40_generations.csv"
+    generations_path = output_dir / f"{output_prefix}_generations.csv"
     generations_df.to_csv(generations_path, index=False)
 
     metric_rows = compute_metric_rows(
@@ -181,19 +186,19 @@ def run_baseline_evaluation(
         bertscore_num_layers=bertscore_num_layers,
     )
 
-    metrics_df = save_metrics(metric_rows, output_dir / "baseline_40_metrics.csv")
+    metrics_df = save_metrics(metric_rows, output_dir / f"{output_prefix}_metrics.csv")
     aggregate_df = (
         metrics_df.groupby("model")[["bleu", "rouge1", "rouge2", "rougeL", "bertscore_f1"]]
         .mean()
         .reset_index()
         .sort_values("rougeL", ascending=False)
     )
-    aggregate_df.to_csv(output_dir / "baseline_40_comparison_table.csv", index=False)
+    aggregate_df.to_csv(output_dir / f"{output_prefix}_comparison_table.csv", index=False)
     write_comparison_markdown(
         aggregate_df,
         metrics_df,
         generations_df,
-        output_dir / "baseline_40_comparison.md",
+        output_dir / f"{output_prefix}_comparison.md",
         sample_size=sample_size,
     )
     return metrics_df, aggregate_df, generations_df
