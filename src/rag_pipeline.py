@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import torch
+from peft import PeftModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 
@@ -38,10 +40,46 @@ def build_review_prompt(topic: str, context: RetrievedContext, mode: str = "lite
     )
 
 
+DEFAULT_GENERATION_MODEL = "google/flan-t5-base"
+DEFAULT_LORA_ADAPTER_PATH = "models/flan_t5_lora"
+
+
+def has_lora_adapter(adapter_path: str | Path = DEFAULT_LORA_ADAPTER_PATH) -> bool:
+    adapter_path = Path(adapter_path)
+    has_config = (adapter_path / "adapter_config.json").exists()
+    has_weights = (adapter_path / "adapter_model.safetensors").exists() or (adapter_path / "adapter_model.bin").exists()
+    return has_config and has_weights
+
+
+def load_flan_t5_generator(
+    model_name: str = DEFAULT_GENERATION_MODEL,
+    lora_adapter_path: str | Path | None = DEFAULT_LORA_ADAPTER_PATH,
+) -> tuple[AutoTokenizer, AutoModelForSeq2SeqLM]:
+    adapter_path = Path(lora_adapter_path) if lora_adapter_path else None
+    tokenizer_source = adapter_path if adapter_path and adapter_path.exists() else model_name
+
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_source)
+    base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+
+    if adapter_path and has_lora_adapter(adapter_path):
+        model = PeftModel.from_pretrained(base_model, adapter_path)
+    else:
+        model = base_model
+
+    model.eval()
+    return tokenizer, model
+
+
 class RagGenerator:
-    def __init__(self, model_name: str = "google/flan-t5-base") -> None:
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+    def __init__(
+        self,
+        model_name: str = DEFAULT_GENERATION_MODEL,
+        lora_adapter_path: str | Path | None = DEFAULT_LORA_ADAPTER_PATH,
+    ) -> None:
+        self.tokenizer, self.model = load_flan_t5_generator(
+            model_name=model_name,
+            lora_adapter_path=lora_adapter_path,
+        )
         self.model.eval()
 
     def generate(self, prompt: str, max_new_tokens: int = 256) -> str:

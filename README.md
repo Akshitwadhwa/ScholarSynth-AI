@@ -181,6 +181,20 @@ Run Streamlit app:
 streamlit run app.py
 ```
 
+Test the saved LoRA adapter locally after copying it back from Colab:
+
+```bash
+python -m src.load_lora_model
+```
+
+Expected local adapter folder:
+
+```text
+models/flan_t5_lora/
+```
+
+The Streamlit/RAG generator automatically loads `models/flan_t5_lora` when the adapter files exist. If that folder is missing, it falls back to the base `google/flan-t5-base` model.
+
 Run the 40-example baseline evaluation from Python:
 
 ```bash
