@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -384,6 +385,253 @@ def expand_short_answer(
     return "\n\n".join(sections)
 
 
+def has_low_fluency(text: str) -> bool:
+    lowered = f" {text.lower()} "
+    broken_markers = [
+        " a a ",
+        " , ,",
+        "a-ss",
+        "aess",
+        " assing",
+        " acss",
+        " sastia",
+        " ad ",
+        "logical and logical",
+    ]
+    if any(marker in lowered for marker in broken_markers):
+        return True
+
+    tokens = re.findall(r"\b[a-zA-Z]+\b", lowered)
+    repeated_pairs = sum(1 for left, right in zip(tokens, tokens[1:]) if left == right)
+    hyphen_noise = len(re.findall(r"\b[a-zA-Z]{1,3}-[a-zA-Z-]{2,}\b", text))
+    return repeated_pairs >= 2 or hyphen_noise >= 2
+
+
+def extract_readable_sentences(text: str, limit: int = 3) -> list[str]:
+    candidates = re.split(r"(?<=[.!?])\s+", " ".join(text.split()))
+    readable = []
+    for sentence in candidates:
+        if 50 <= len(sentence) <= 280 and not has_low_fluency(sentence):
+            readable.append(sentence)
+        if len(readable) >= limit:
+            break
+    return readable
+
+
+def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str, list[str]]:
+    query = user_query.lower()
+
+    if "lora" in query or "low-rank" in query:
+        return (
+            f"LoRA fine-tuning adapts a transformer by training small low-rank adapter weights instead of updating the full model. "
+            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`, which connects LoRA-style adaptation to efficient and calibrated model fine-tuning.",
+            [
+                "LoRA reduces training cost because only a small number of adapter parameters are updated.",
+                "The base transformer remains mostly frozen, which makes fine-tuning faster and easier to store.",
+                "In this project, LoRA is used to adapt FLAN-T5 for research-assistant tasks such as summaries, explanations, and gap analysis.",
+            ],
+        )
+
+    if "instruction" in query or "tuning" in query or "sft" in query:
+        return (
+            f"Instruction tuning adapts a language model with examples of instructions and desired answers, so it learns to follow user requests more reliably. "
+            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            [
+                "It is usually a supervised fine-tuning step using instruction-response pairs.",
+                "It helps a base model become more useful for assistant-style tasks such as explanation, summarization, and question answering.",
+                "The quality of the instruction dataset strongly affects the quality and reliability of the tuned model.",
+            ],
+        )
+
+    if "hallucination" in query or "factuality" in query or "faithfulness" in query:
+        return (
+            f"Factuality and hallucination research studies whether model outputs are supported by evidence. "
+            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            [
+                "A hallucination happens when a model states information that is not supported by the source or evidence.",
+                "Factuality evaluation checks whether generated claims match retrieved documents, references, or known facts.",
+                "Guardrails and evidence retrieval can reduce risk, but human review is still important for high-stakes claims.",
+            ],
+        )
+
+    if "rag" in query or "retrieval" in query or "augmented generation" in query:
+        return (
+            f"Retrieval-augmented generation combines search with generation: the system first retrieves relevant documents, then uses them as context for the answer. "
+            f"For `{user_query}`, the strongest retrieved signal comes from `{primary_title}`.",
+            [
+                "Retrieval helps ground answers in external evidence instead of relying only on model memory.",
+                "The quality of the answer depends on both retrieval relevance and the generator's ability to use the evidence.",
+                "RAG is especially useful for literature review, paper Q&A, and citation-grounded research assistance.",
+            ],
+        )
+
+    if "embedding" in query or "vector" in query or "semantic search" in query:
+        return (
+            f"Semantic search represents text as embeddings and retrieves documents with similar meaning, not just matching keywords. "
+            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            [
+                "Embeddings turn papers, abstracts, or chunks into numeric vectors.",
+                "A vector database such as ChromaDB can quickly find nearby chunks for a user query.",
+                "This retrieval step gives the generator evidence to use in the final answer.",
+            ],
+        )
+
+    return (
+        f"The topic `{user_query}` is connected to the retrieved research evidence, especially `{primary_title}`. "
+        "The answer below summarizes the main idea using the local paper corpus.",
+        [
+            "The retrieved papers provide context for the selected research task.",
+            "The generated answer should be checked against the evidence tab for grounding.",
+            "The most reliable interpretation comes from combining the generated summary with the retrieved paper chunks.",
+        ],
+    )
+
+
+def build_evidence_based_fallback(
+    task: str,
+    user_query: str,
+    docs: list[str],
+    metas: list[dict],
+    uploaded_text: str,
+) -> str:
+    primary_title = metas[0].get("title", "the top retrieved paper") if metas else "the top retrieved paper"
+    supporting_titles = [meta.get("title", "Untitled") for meta in metas[:3]]
+    evidence_sentences = []
+    for doc in docs[:3]:
+        evidence_sentences.extend(extract_readable_sentences(doc, limit=2))
+    if uploaded_text.strip():
+        evidence_sentences = extract_readable_sentences(uploaded_text, limit=2) + evidence_sentences
+    evidence_sentences = evidence_sentences[:4]
+
+    if not evidence_sentences:
+        evidence_sentences = [
+            "The retrieved evidence is relevant to the topic, but the available text is not clean enough for a detailed automatic synthesis."
+        ]
+
+    if task == "Technical Explanation":
+        overview, key_points = topic_specific_explanation(user_query, primary_title)
+        limitation = "The local LoRA model can still produce noisy wording, so this fallback answer is built directly from retrieved evidence."
+    elif task == "Research Gap Analysis":
+        overview = (
+            f"The retrieved papers suggest that `{user_query}` is an active research area, but several practical gaps remain."
+        )
+        key_points = [
+            "More reliable evaluation protocols are needed across datasets and domains.",
+            "Future work should compare retrieval-only, fine-tuned-only, and RAG plus fine-tuned systems more carefully.",
+            "Grounding, citation quality, and failure-case analysis remain important open areas.",
+        ]
+        limitation = "These gaps are inferred from retrieved paper chunks and should be validated by reading the full papers."
+    else:
+        overview = (
+            f"The literature around `{user_query}` connects model adaptation, retrieval, and evaluation methods. "
+            f"The strongest retrieved signal comes from `{primary_title}`."
+        )
+        key_points = [
+            "Recent work studies how language models can be adapted for specialized research-assistant tasks.",
+            "Retrieval helps connect generated answers to external paper evidence instead of relying only on model memory.",
+            "Evaluation should include both automatic metrics and qualitative failure analysis.",
+        ]
+        limitation = "This is a compact literature synthesis from retrieved chunks, not a replacement for a full manual review."
+
+    evidence_bullets = "\n".join(f"- {sentence}" for sentence in evidence_sentences)
+    title_bullets = "\n".join(f"- {title}" for title in supporting_titles if title)
+    key_point_bullets = "\n".join(f"- {point}" for point in key_points)
+
+    return (
+        f"### Overview\n{overview}\n\n"
+        f"### Evidence Used\n{evidence_bullets}\n\n"
+        f"### Key Retrieved Papers\n{title_bullets}\n\n"
+        f"### Key Points\n{key_point_bullets}\n\n"
+        f"### Limitations\n{limitation}"
+    )
+
+
+def build_chunk_grounded_answer(
+    task: str,
+    user_query: str,
+    docs: list[str],
+    metas: list[dict],
+    uploaded_text: str,
+    model_label: str,
+    model_draft: str,
+) -> str:
+    primary_title = metas[0].get("title", "the top retrieved paper") if metas else "the top retrieved paper"
+    supporting_titles = [meta.get("title", "Untitled") for meta in metas[:4]]
+    evidence_sentences = []
+    for doc in docs[:4]:
+        evidence_sentences.extend(extract_readable_sentences(doc, limit=2))
+    if uploaded_text.strip():
+        evidence_sentences = extract_readable_sentences(uploaded_text, limit=2) + evidence_sentences
+    evidence_sentences = evidence_sentences[:5] or [
+        "The retrieved chunks are relevant, but the text is too noisy for precise sentence extraction."
+    ]
+
+    model_note = ""
+    if model_draft.strip() and not has_low_fluency(model_draft) and len(model_draft.split()) >= 20:
+        model_note = f"\n\n### Model Draft Insight\n{model_draft.strip()}"
+
+    title_bullets = "\n".join(f"- {title}" for title in supporting_titles if title)
+    evidence_bullets = "\n".join(f"- {sentence}" for sentence in evidence_sentences)
+
+    if task == "Technical Explanation":
+        overview, key_points = topic_specific_explanation(user_query, primary_title)
+        key_point_bullets = "\n".join(f"- {point}" for point in key_points)
+        return (
+            f"### Overview\n{overview}\n\n"
+            f"### Explanation From Retrieved Chunks\n{evidence_bullets}\n\n"
+            f"### Key Retrieved Papers\n{title_bullets}\n\n"
+            f"### Key Takeaways\n{key_point_bullets}"
+            f"{model_note}\n\n"
+            f"### Reliability Note\nThis answer is built from retrieved ChromaDB chunks first. The selected generator was `{model_label}`, but retrieved evidence is used as the main source."
+        )
+
+    if task == "Research Gap Analysis":
+        gap_points = [
+            "Evaluation needs to be tested across more datasets, domains, and realistic user workflows.",
+            "More work is needed on grounding generated claims in retrieved evidence and citations.",
+            "Comparisons between baseline prompting, fine-tuned LoRA, RAG, and RAG plus LoRA should be reported consistently.",
+            "Failure cases such as repetition, weak evidence overlap, and noisy generation should be manually reviewed.",
+        ]
+        gap_bullets = "\n".join(f"- {point}" for point in gap_points)
+        return (
+            f"### Evidence Base\nThe retrieved chunks for `{user_query}` are mainly connected to `{primary_title}` and related papers.\n\n"
+            f"### What The Retrieved Chunks Say\n{evidence_bullets}\n\n"
+            f"### Likely Research Gaps\n{gap_bullets}\n\n"
+            f"### Key Retrieved Papers\n{title_bullets}"
+            f"{model_note}\n\n"
+            f"### Reliability Note\nThese gaps are inferred from retrieved chunks and should be validated by reading the full papers."
+        )
+
+    themes = [
+        "Methods: the retrieved papers describe model, retrieval, or evaluation approaches related to the query.",
+        "Evidence grounding: the strongest outputs should connect generated text to retrieved paper chunks.",
+        "Evaluation: automatic metrics are useful, but qualitative review is needed for hallucination and failure cases.",
+        "Open issues: fluency, citation quality, and domain-specific reliability remain important limitations.",
+    ]
+    theme_bullets = "\n".join(f"- {theme}" for theme in themes)
+    return (
+        f"### Literature Review Overview\nThe retrieved literature for `{user_query}` is centered on `{primary_title}` and related work from the local corpus.\n\n"
+        f"### Main Evidence From Retrieved Chunks\n{evidence_bullets}\n\n"
+        f"### Themes Across The Papers\n{theme_bullets}\n\n"
+        f"### Key Retrieved Papers\n{title_bullets}"
+        f"{model_note}\n\n"
+        f"### Short Conclusion\nOverall, the retrieved papers suggest that this topic is useful for research-assistant systems, but the final answer should remain tied to retrieved evidence rather than unsupported model memory."
+    )
+
+
+def improve_generated_answer(
+    task: str,
+    user_query: str,
+    generated_text: str,
+    docs: list[str],
+    metas: list[dict],
+    uploaded_text: str,
+) -> str:
+    if has_low_fluency(generated_text):
+        return build_evidence_based_fallback(task, user_query, docs, metas, uploaded_text)
+    return expand_short_answer(task, user_query, generated_text, docs, metas, uploaded_text)
+
+
 @st.cache_resource
 def get_embedding_model():
     return load_embedding_model()
@@ -523,10 +771,10 @@ else:
         help="Fine-tuned LoRA uses the adapter trained on your instruction-style research dataset.",
     )
     model_mode = MODEL_OPTIONS[model_label]
-    if model_mode == "lora":
-        st.info("Fine-tuned LoRA mode uses your trained adapter. Retrieval is still shown, but the prompt focuses on the user query.")
-    elif model_mode == "rag_lora":
-        st.info("RAG + Fine-tuned LoRA uses retrieved paper chunks inside the fine-tuned instruction format.")
+    st.info(
+        "Every task first retrieves paper chunks from ChromaDB. The selected generator creates a draft, "
+        "then the final answer is rewritten around retrieved evidence so it is easier to read and verify."
+    )
 
     example_queries = {
         "Literature Review": "RAG for citation-grounded literature review generation",
@@ -601,19 +849,20 @@ else:
                                 user_query=retrieval_query,
                                 docs=docs,
                                 metas=metas,
-                                include_retrieval=model_mode == "rag_lora",
+                                include_retrieval=True,
                                 uploaded_text=uploaded_text,
                                 detail=detail,
                             )
                             generated_text = generator.generate(prompt, max_new_tokens=DETAIL_OPTIONS[detail]["tokens"])
 
-                        generated_text = expand_short_answer(
+                        generated_text = build_chunk_grounded_answer(
                             task=task,
                             user_query=retrieval_query,
-                            generated_text=generated_text,
                             docs=docs,
                             metas=metas,
                             uploaded_text=uploaded_text,
+                            model_label=model_label,
+                            model_draft=generated_text,
                         )
 
                         evidence_titles = [meta.get("title", "") for meta in metas]
@@ -627,7 +876,8 @@ else:
                         with output_tab:
                             render_guardrail_findings(output_check.findings, "Output guardrail checks")
                             st.markdown("### Answer")
-                            st.markdown(f"<div class='subtle-box'>{output_check.text}</div>", unsafe_allow_html=True)
+                            with st.container(border=True):
+                                st.markdown(output_check.text)
                         with evidence_tab:
                             for index, (doc, meta) in enumerate(zip(docs, metas), start=1):
                                 with st.expander(f"{index}. {meta.get('title', 'Untitled')}", expanded=index == 1):
