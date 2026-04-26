@@ -13,7 +13,7 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 - Vector DB: `ChromaDB`
 - Metadata DB: `SQLite`
 - Frontend: `Streamlit`
-- Evaluation: BLEU, ROUGE-1, ROUGE-2, ROUGE-L, BERTScore
+- Evaluation: BLEU/SacreBLEU, ROUGE-1, ROUGE-2, ROUGE-L, plus guardrail/error-analysis checks
 
 ## What Has Been Completed
 
@@ -27,11 +27,12 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 8. Semantic retrieval tested across LoRA, chatbots, RAG hallucination, long-context transformers, scholarly search, and literature review queries.
 9. RAG and agent scaffolding created in `src/rag_pipeline.py` and `src/agents.py`.
 10. Baseline evaluation module created in `src/baseline_eval.py`.
-11. 200-example baseline evaluation completed.
-12. Generated baseline evaluation outputs are saved under `outputs/`.
-13. LoRA adapter files are present under `models/flan_t5_lora/`.
-14. Streamlit app UI redesigned with light/dark theme support, dataset status cards, safer index controls, and output/evidence tabs.
-15. Project Jupyter kernel registered as `Gen AI Research Assistant (.venv)`.
+11. 200-example baseline evaluation completed across `pretrained`, `prompt_engineered`, `rag_system`, and `fine_tuned_lora`.
+12. 1,200-example LoRA test generation and metrics files added under `outputs/`.
+13. Qualitative error analysis and guardrail reports generated in `outputs/error_analysis.md`.
+14. LoRA adapter files are present under `models/flan_t5_lora/`.
+15. Streamlit app UI redesigned with light/dark theme support, dataset status cards, LoRA generator selection, safer index controls, output/evidence tabs, and guardrail warnings.
+16. Project Jupyter kernel registered as `Gen AI Research Assistant (.venv)`.
 
 ## Current Dataset Status
 
@@ -70,46 +71,60 @@ The latest baseline evaluation was run on 200 balanced examples using:
 - `pretrained`: plain `flan-t5-base`
 - `prompt_engineered`: structured prompt using the same `flan-t5-base`
 - `rag_system`: Chroma retrieval + `flan-t5-base`
+- `fine_tuned_lora`: `flan-t5-base` with the trained LoRA adapter
 
 Results are saved in:
 
 - `outputs/baseline_200_eval_data.csv`
-- `outputs/baseline_200_metrics.csv`
-- `outputs/baseline_200_generations.csv`
 - `outputs/baseline_200_comparison_table.csv`
+- `outputs/baseline_200_task_metrics.csv`
 - `outputs/baseline_200_comparison.md`
+- `outputs/lora_test_metrics.csv`
+- `outputs/lora_test_generations.csv`
+- `outputs/error_analysis.md`
 
 ### Aggregate Comparison Table
 
-| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | BERTScore F1 |
+| Model | Eval Examples | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| pretrained | 0.0117 | 0.2100 | 0.1011 | 0.1675 | 0.7849 |
-| rag_system | 0.0116 | 0.1649 | 0.0749 | 0.1355 | 0.7632 |
-| prompt_engineered | 0.0026 | 0.1384 | 0.0727 | 0.1200 | 0.7537 |
+| fine_tuned_lora | 200 | 29.0810 | 0.5131 | 0.3699 | 0.4376 |
+| pretrained | 200 | 0.3151 | 0.1679 | 0.0820 | 0.1363 |
+| rag_system | 200 | 0.1292 | 0.1458 | 0.0816 | 0.1294 |
+| prompt_engineered | 200 | 0.0005 | 0.1026 | 0.0594 | 0.0964 |
+
+Separate 1,200-example LoRA test:
+
+| Model | Eval Examples | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fine_tuned_lora | 1200 | 47.2745 | 0.6561 | 0.5404 | 0.6031 |
 
 Interpretation:
 
-- The pretrained baseline currently scores highest on lexical metrics because many reference answers are derived from the same input abstracts.
-- RAG still provides useful retrieved evidence and is important for grounded answers, citations, and hallucination reduction.
-- These are baseline results before LoRA fine-tuning. Final improvement should be measured after adding `fine_tuned_lora` and `rag_plus_lora`.
+- `fine_tuned_lora` is now the strongest saved model on the 200-example comparison.
+- The largest LoRA gains are on `evidence_based_qa`, `technical_explanation`, and `paper_summary`.
+- `comparative_analysis`, `literature_review`, and `research_gap_analysis` remain harder tasks.
+- RAG still matters for evidence grounding and citation-style outputs, but the current saved comparison does not yet include `rag_plus_lora`.
 
 ### Baseline Metrics Chart
 
 ```text
-BERTScore F1
-pretrained         0.7849 | ██████████████████████████████
-rag_system         0.7632 | █████████████████████████████
-prompt_engineered  0.7537 | ████████████████████████████
-
 ROUGE-L
-pretrained         0.1675 | ██████████████████████████████
-rag_system         0.1355 | ████████████████████████
-prompt_engineered  0.1200 | █████████████████████
+fine_tuned_lora    0.4376 | ████████████████████████████
+pretrained         0.1363 | █████████
+rag_system         0.1294 | ████████
+prompt_engineered  0.0964 | ██████
 
-ROUGE-2
-pretrained         0.1011 | ██████████████████████████████
-rag_system         0.0749 | ██████████████████████
-prompt_engineered  0.0727 | █████████████████████
+ROUGE-1
+fine_tuned_lora    0.5131 | ████████████████████████████
+pretrained         0.1679 | █████████
+rag_system         0.1458 | ████████
+prompt_engineered  0.1026 | ██████
+
+BLEU
+fine_tuned_lora   29.0810 | ████████████████████████████
+pretrained         0.3151 | █
+rag_system         0.1292 | █
+prompt_engineered  0.0005 | █
 ```
 
 ## Fine-Tuned LoRA Status
@@ -125,15 +140,12 @@ models/flan_t5_lora/tokenizer_config.json
 
 Notebook `notebooks/04_peft_finetuning_colab.ipynb` is the Colab-oriented training notebook. It installs dependencies, mounts Google Drive, loads the fine-tuning JSONL files, configures LoRA, trains `google/flan-t5-base`, and saves the adapter.
 
-Notebook `notebooks/07_finetuned_lora_comparison.ipynb` is intended to compare:
+The LoRA adapter has been evaluated in two ways:
 
-- `pretrained`
-- `prompt_engineered`
-- `rag_system`
-- `fine_tuned_lora`
-- `rag_plus_lora`
+- 200-example comparison against `pretrained`, `prompt_engineered`, and `rag_system`
+- 1,200-example LoRA-only test using `outputs/lora_test_generations.csv`
 
-The LoRA adapter is present, but final full LoRA comparison outputs should be regenerated and saved before the final report.
+The next useful evaluation upgrade is to add `rag_plus_lora` generations on the same 200-example split.
 
 ## Streamlit App Changes
 
@@ -142,8 +154,10 @@ The LoRA adapter is present, but final full LoRA comparison outputs should be re
 - Light/dark mode selector in the sidebar
 - Dataset status indicators for raw papers, processed chunks, SQLite, and Chroma
 - Hero section for ScholarSynth AI
-- Status cards for raw papers, text chunks, vector chunks, and generator
+- Status cards for raw papers, text chunks, vector chunks, and LoRA adapter availability
+- Generator selector for `Base FLAN-T5`, `Fine-tuned LoRA`, and `RAG + Fine-tuned LoRA`
 - Safer dataset/index management inside an expander
+- Input and output guardrail warnings/errors shown in expandable panels
 
 
 
@@ -170,7 +184,8 @@ project/
 │   ├── 04_peft_finetuning_colab.ipynb
 │   ├── 05_evalute_baseline.ipynb
 │   ├── 06_large_data_collection_5000.ipynb
-│   └── 07_finetuned_lora_comparison.ipynb
+│   ├── 07_finetuned_lora_comparison.ipynb
+│   └── 08_error_analysis_and_guardrails.ipynb
 ├── src/
 │   ├── paper_search.py
 │   ├── preprocessing.py
@@ -189,5 +204,4 @@ project/
 ├── requirements.txt
 └── README.md
 ```
-
 

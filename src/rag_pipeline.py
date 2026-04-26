@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
+from peft import PeftModel
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 
@@ -39,16 +40,23 @@ def build_review_prompt(topic: str, context: RetrievedContext, mode: str = "lite
 
 
 class RagGenerator:
-    def __init__(self, model_name: str = "google/flan-t5-base") -> None:
+    def __init__(self, model_name: str = "google/flan-t5-base", adapter_path: str | None = None) -> None:
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        base_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
+        self.model = PeftModel.from_pretrained(base_model, adapter_path) if adapter_path else base_model
         self.device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
         self.model.to(self.device)
         self.model.eval()
 
     def generate(self, prompt: str, max_new_tokens: int = 256) -> str:
-        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True)
+        inputs = self.tokenizer(prompt, return_tensors="pt", truncation=True, max_length=512)
         inputs = {key: value.to(self.device) for key, value in inputs.items()}
         with torch.inference_mode():
-            output_ids = self.model.generate(**inputs, max_new_tokens=max_new_tokens, do_sample=False)
+            output_ids = self.model.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                no_repeat_ngram_size=3,
+                repetition_penalty=1.15,
+            )
         return self.tokenizer.decode(output_ids[0], skip_special_tokens=True).strip()

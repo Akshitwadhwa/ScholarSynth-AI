@@ -19,11 +19,30 @@ RAW_CSV = DATA_DIR / "raw_papers.csv"
 PROCESSED_CSV = DATA_DIR / "processed_papers.csv"
 PAPERS_DB = DATA_DIR / "papers.db"
 CHROMA_DB = DATA_DIR / "chroma" / "chroma.sqlite3"
+LORA_ADAPTER_DIR = Path("models") / "flan_t5_lora"
 
 TASK_DESCRIPTIONS = {
     "Literature Review": "Synthesize methods, findings, trends, and open questions from retrieved papers.",
     "Research Gap Analysis": "Identify missing evidence, weak evaluation areas, and future research directions.",
     "Technical Explanation": "Explain a technical topic in clear language using retrieved academic context.",
+}
+
+TASK_TO_FINETUNE_TASK = {
+    "Literature Review": "literature_review",
+    "Research Gap Analysis": "research_gap_analysis",
+    "Technical Explanation": "technical_explanation",
+}
+
+TASK_TO_INSTRUCTION = {
+    "Literature Review": "Generate a short literature review using the provided papers and retrieved evidence.",
+    "Research Gap Analysis": "Identify research gaps using the provided papers and retrieved evidence.",
+    "Technical Explanation": "Explain the technical concept in simple terms using the provided papers and retrieved evidence.",
+}
+
+MODEL_OPTIONS = {
+    "Base FLAN-T5": "base",
+    "Fine-tuned LoRA": "lora",
+    "RAG + Fine-tuned LoRA": "rag_lora",
 }
 
 
@@ -158,6 +177,12 @@ def file_row(label: str, path: Path) -> str:
     return f"<span class='status-warn'>Missing</span> - {label}"
 
 
+def lora_is_available() -> bool:
+    return (LORA_ADAPTER_DIR / "adapter_config.json").exists() and (
+        LORA_ADAPTER_DIR / "adapter_model.safetensors"
+    ).exists()
+
+
 def get_csv_count(path: Path) -> str:
     if not path.exists():
         return "Missing"
@@ -188,6 +213,46 @@ def render_metric(label: str, value: str) -> None:
     )
 
 
+def render_guardrail_findings(findings, title: str = "Guardrail checks") -> None:
+    if not findings:
+        return
+
+    with st.expander(title, expanded=True):
+        for finding in findings:
+            if finding.severity == "error":
+                st.error(finding.message)
+            elif finding.severity == "warning":
+                st.warning(finding.message)
+            else:
+                st.info(finding.message)
+
+
+def build_finetuned_prompt(
+    task: str,
+    user_query: str,
+    docs: list[str],
+    metas: list[dict],
+    include_retrieval: bool,
+) -> str:
+    evidence_lines = []
+    if include_retrieval:
+        for index, (doc, meta) in enumerate(zip(docs, metas), start=1):
+            evidence_lines.append(f"Paper {index}: {meta.get('title', 'Untitled')}. Abstract: {doc}")
+
+    if evidence_lines:
+        input_text = f"User question: {user_query}\n\nRetrieved evidence:\n" + "\n".join(evidence_lines)
+    else:
+        input_text = f"User question: {user_query}"
+
+    return (
+        f"Instruction: {TASK_TO_INSTRUCTION[task]}\n"
+        f"Task: {TASK_TO_FINETUNE_TASK[task]}\n"
+        f"Topic: {user_query}\n"
+        f"Input:\n{input_text[:2200]}\n\n"
+        "Answer:"
+    )
+
+
 @st.cache_resource
 def get_embedding_model():
     return load_embedding_model()
@@ -203,6 +268,11 @@ def get_generator():
     return RagGenerator()
 
 
+@st.cache_resource
+def get_lora_generator():
+    return RagGenerator(adapter_path=str(LORA_ADAPTER_DIR))
+
+
 guardrail = GuardrailAgent()
 
 with st.sidebar:
@@ -214,6 +284,7 @@ with st.sidebar:
     st.markdown(file_row("processed chunks", PROCESSED_CSV), unsafe_allow_html=True)
     st.markdown(file_row("SQLite metadata", PAPERS_DB), unsafe_allow_html=True)
     st.markdown(file_row("Chroma index", CHROMA_DB), unsafe_allow_html=True)
+    st.markdown(file_row("LoRA adapter", LORA_ADAPTER_DIR / "adapter_model.safetensors"), unsafe_allow_html=True)
     st.divider()
     st.caption("Tip")
     st.write("Use the existing index for normal demos. Fetching papers overwrites the current raw dataset.")
@@ -240,7 +311,7 @@ with status_cols[1]:
 with status_cols[2]:
     render_metric("Vector Chunks", get_chroma_count())
 with status_cols[3]:
-    render_metric("Generator", "FLAN-T5")
+    render_metric("LoRA Adapter", "Ready" if lora_is_available() else "Missing")
 
 st.write("")
 
@@ -262,10 +333,11 @@ with st.expander("Dataset and index management", expanded=False):
         build_index_clicked = st.button("Build Local Index", use_container_width=True)
 
     if fetch_clicked:
-        is_valid, error = guardrail.validate_query(topic)
-        if not is_valid:
-            st.error(error)
+        query_check = guardrail.validate_query(topic)
+        if not query_check.passed:
+            render_guardrail_findings(query_check.findings, "Input guardrail checks")
         else:
+            render_guardrail_findings(query_check.findings, "Input guardrail checks")
             with st.spinner("Fetching papers from arXiv and Semantic Scholar..."):
                 raw_df = collect_papers_for_topic(topic, semantic_api_key=semantic_api_key or None)
                 raw_df.to_csv(RAW_CSV, index=False)
@@ -310,6 +382,21 @@ else:
     )
     st.caption(TASK_DESCRIPTIONS[task])
 
+    available_model_labels = ["Base FLAN-T5"]
+    if lora_is_available():
+        available_model_labels.extend(["Fine-tuned LoRA", "RAG + Fine-tuned LoRA"])
+    model_label = st.selectbox(
+        "Generator",
+        available_model_labels,
+        index=len(available_model_labels) - 1,
+        help="Fine-tuned LoRA uses the adapter trained on your instruction-style research dataset.",
+    )
+    model_mode = MODEL_OPTIONS[model_label]
+    if model_mode == "lora":
+        st.info("Fine-tuned LoRA mode uses your trained adapter. Retrieval is still shown, but the prompt focuses on the user query.")
+    elif model_mode == "rag_lora":
+        st.info("RAG + Fine-tuned LoRA uses retrieved paper chunks inside the fine-tuned instruction format.")
+
     example_queries = {
         "Literature Review": "RAG for citation-grounded literature review generation",
         "Research Gap Analysis": "research gaps in hallucination mitigation for RAG systems",
@@ -325,10 +412,11 @@ else:
     top_k = st.slider("Retrieved evidence chunks", min_value=3, max_value=10, value=5, step=1)
 
     if st.button("Generate Grounded Output", type="primary", use_container_width=True):
-        is_valid, error = guardrail.validate_query(user_query)
-        if not is_valid:
-            st.error(error)
+        query_check = guardrail.validate_query(user_query)
+        if not query_check.passed:
+            render_guardrail_findings(query_check.findings, "Input guardrail checks")
         else:
+            render_guardrail_findings(query_check.findings, "Input guardrail checks")
             try:
                 with st.spinner("Retrieving evidence and generating answer..."):
                     embedding_model = get_embedding_model()
@@ -339,22 +427,41 @@ else:
                     if not docs:
                         st.warning("No relevant evidence was retrieved. Rebuild the index or try a different query.")
                     else:
-                        generator = get_generator()
+                        if model_mode == "base":
+                            generator = get_generator()
 
-                        if task == "Literature Review":
-                            agent = LiteratureReviewAgent(generator)
-                        elif task == "Research Gap Analysis":
-                            agent = ResearchGapAgent(generator)
+                            if task == "Literature Review":
+                                agent = LiteratureReviewAgent(generator)
+                            elif task == "Research Gap Analysis":
+                                agent = ResearchGapAgent(generator)
+                            else:
+                                agent = TechnicalExplainerAgent(generator)
+
+                            response = agent.run(user_query, retrieval_results)
+                            generated_text = response.content
                         else:
-                            agent = TechnicalExplainerAgent(generator)
+                            generator = get_lora_generator()
+                            prompt = build_finetuned_prompt(
+                                task=task,
+                                user_query=user_query,
+                                docs=docs,
+                                metas=metas,
+                                include_retrieval=model_mode == "rag_lora",
+                            )
+                            generated_text = generator.generate(prompt, max_new_tokens=180)
 
-                        response = agent.run(user_query, retrieval_results)
-                        safe_output = guardrail.validate_output(response.content)
+                        evidence_titles = [meta.get("title", "") for meta in metas]
+                        output_check = guardrail.validate_output(
+                            generated_text,
+                            evidence_docs=docs,
+                            evidence_titles=evidence_titles,
+                        )
 
                         output_tab, evidence_tab = st.tabs(["Generated output", "Retrieved evidence"])
                         with output_tab:
+                            render_guardrail_findings(output_check.findings, "Output guardrail checks")
                             st.markdown("### Answer")
-                            st.markdown(f"<div class='subtle-box'>{safe_output}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div class='subtle-box'>{output_check.text}</div>", unsafe_allow_html=True)
                         with evidence_tab:
                             for index, (doc, meta) in enumerate(zip(docs, metas), start=1):
                                 with st.expander(f"{index}. {meta.get('title', 'Untitled')}", expanded=index == 1):
