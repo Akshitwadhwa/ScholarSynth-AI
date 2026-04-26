@@ -9,10 +9,12 @@ from docx.enum.table import WD_TABLE_ALIGNMENT, WD_CELL_VERTICAL_ALIGNMENT
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
+from PIL import Image, ImageDraw, ImageFont
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "report" / "ScholarSynth_AI_Project_Report.docx"
+ASSET_DIR = ROOT / "report" / "assets"
 
 TITLE = (
     "Autonomous Research Assistant: A Multi-Agent Generative AI System for "
@@ -28,6 +30,106 @@ STUDENTS = [
 ACCENT = "1F4E79"
 LIGHT = "EAF2FB"
 DARK = RGBColor(31, 78, 121)
+TABLE_COUNTER = 0
+
+
+def load_font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont:
+    candidates = [
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Arial.ttf",
+        "/System/Library/Fonts/Supplemental/Helvetica Bold.ttf" if bold else "/System/Library/Fonts/Supplemental/Helvetica.ttf",
+        "/Library/Fonts/Arial Bold.ttf" if bold else "/Library/Fonts/Arial.ttf",
+    ]
+    for candidate in candidates:
+        path = Path(candidate)
+        if path.exists():
+            return ImageFont.truetype(str(path), size)
+    return ImageFont.load_default()
+
+
+def wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.FreeTypeFont, width: int) -> list[str]:
+    words = str(text).split()
+    if not words:
+        return [""]
+    lines: list[str] = []
+    current = words[0]
+    for word in words[1:]:
+        candidate = f"{current} {word}"
+        if draw.textbbox((0, 0), candidate, font=font)[2] <= width:
+            current = candidate
+        else:
+            lines.append(current)
+            current = word
+    lines.append(current)
+    return lines
+
+
+def draw_rounded_rect(draw: ImageDraw.ImageDraw, xy: tuple[int, int, int, int], fill: str, outline: str | None = None) -> None:
+    draw.rounded_rectangle(xy, radius=18, fill=fill, outline=outline, width=2 if outline else 1)
+
+
+def create_flowchart_image() -> Path:
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    path = ASSET_DIR / "project_flowchart.png"
+    width, height = 1800, 900
+    img = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(img)
+    title_font = load_font(46, bold=True)
+    subtitle_font = load_font(24)
+    box_font = load_font(22, bold=True)
+    small_font = load_font(18)
+
+    draw.rectangle((0, 0, width, height), fill="#F7FBFF")
+    draw.text((70, 42), "ScholarSynth AI: Project Workflow", fill="#173B63", font=title_font)
+    draw.text(
+        (72, 100),
+        "Research paper retrieval, semantic storage, RAG generation, LoRA fine-tuning, evaluation, and UI",
+        fill="#496A88",
+        font=subtitle_font,
+    )
+
+    boxes = [
+        (80, 200, 350, 330, "#DFF3FF", "User Topic", "Research query from Streamlit"),
+        (430, 200, 740, 330, "#E8E4FF", "Paper APIs", "arXiv + Semantic Scholar"),
+        (820, 200, 1160, 330, "#E8F8EC", "Dataset", "5,000 papers, 10,339 chunks"),
+        (1240, 200, 1630, 330, "#FFF1D6", "Preprocessing", "Clean, deduplicate, chunk, split"),
+        (200, 470, 520, 600, "#E8F8EC", "Storage", "SQLite metadata + ChromaDB vectors"),
+        (600, 470, 920, 600, "#DFF3FF", "Retrieval", "all-MiniLM-L6-v2 embeddings"),
+        (1000, 470, 1320, 600, "#E8E4FF", "Generation", "FLAN-T5-base + RAG context"),
+        (1400, 470, 1700, 600, "#FFE5EA", "LoRA", "PEFT fine-tuned adapter"),
+        (440, 720, 760, 830, "#F3EFFF", "Multi-Agent Layer", "Review, gap, explainer, guardrail"),
+        (850, 720, 1170, 830, "#E6F7F2", "Outputs", "Review, Q&A, gaps, explanation"),
+        (1260, 720, 1600, 830, "#FFF1D6", "Evaluation", "BLEU, ROUGE, BERTScore, errors"),
+    ]
+
+    for x1, y1, x2, y2, color, heading, body in boxes:
+        draw_rounded_rect(draw, (x1, y1, x2, y2), color, "#B8C7D6")
+        draw.text((x1 + 22, y1 + 22), heading, fill="#173B63", font=box_font)
+        for i, line in enumerate(wrap_text(draw, body, small_font, x2 - x1 - 44)[:3]):
+            draw.text((x1 + 22, y1 + 65 + i * 24), line, fill="#35536E", font=small_font)
+
+    arrows = [
+        ((355, 265), (425, 265)),
+        ((745, 265), (815, 265)),
+        ((1165, 265), (1235, 265)),
+        ((1435, 335), (1445, 465)),
+        ((1240, 535), (925, 535)),
+        ((595, 535), (525, 535)),
+        ((925, 535), (995, 535)),
+        ((1325, 535), (1395, 535)),
+        ((1548, 605), (1120, 715)),
+        ((850, 665), (760, 725)),
+        ((765, 775), (845, 775)),
+        ((1175, 775), (1255, 775)),
+    ]
+    for start, end in arrows:
+        draw.line((start, end), fill="#2B6EA6", width=5)
+        ex, ey = end
+        sx, sy = start
+        direction = 1 if ex >= sx else -1
+        draw.polygon([(ex, ey), (ex - 18 * direction, ey - 10), (ex - 18 * direction, ey + 10)], fill="#2B6EA6")
+
+    img.save(path)
+    return path
 
 
 def set_cell_shading(cell, fill: str) -> None:
@@ -59,30 +161,72 @@ def set_cell_width(cell, width_inches: float) -> None:
 
 
 def add_table(document: Document, headers: list[str], rows: list[list[str]], widths: list[float] | None = None):
-    header = " | ".join(headers)
+    global TABLE_COUNTER
+    TABLE_COUNTER += 1
+    ASSET_DIR.mkdir(parents=True, exist_ok=True)
+    output_path = ASSET_DIR / f"table_{TABLE_COUNTER:02d}.png"
+
+    image_width = 1500
+    margin_x = 42
+    padding_x = 22
+    padding_y = 14
+    header_font = load_font(27, bold=True)
+    body_font = load_font(25)
+    caption_font = load_font(20)
+    line_gap = 7
+
+    if widths:
+        total = sum(widths)
+        col_widths = [int((image_width - 2 * margin_x) * width / total) for width in widths]
+    else:
+        col_widths = [int((image_width - 2 * margin_x) / len(headers))] * len(headers)
+    col_widths[-1] += image_width - 2 * margin_x - sum(col_widths)
+
+    scratch = Image.new("RGB", (image_width, 200), "white")
+    scratch_draw = ImageDraw.Draw(scratch)
+
+    def row_height(values: list[str], font: ImageFont.FreeTypeFont) -> int:
+        max_lines = 1
+        for value, col_width in zip(values, col_widths):
+            lines = wrap_text(scratch_draw, value, font, col_width - 2 * padding_x)
+            max_lines = max(max_lines, len(lines))
+        line_height = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + line_gap
+        return max(58, padding_y * 2 + max_lines * line_height)
+
+    heights = [row_height(headers, header_font)] + [row_height(row, body_font) for row in rows]
+    image_height = sum(heights) + 2 * margin_x
+    img = Image.new("RGB", (image_width, image_height), "white")
+    draw = ImageDraw.Draw(img)
+
+    y = margin_x
+    all_rows = [headers] + rows
+    for row_index, (values, height) in enumerate(zip(all_rows, heights)):
+        x = margin_x
+        is_header = row_index == 0
+        fill = "#1F4E79" if is_header else ("#F7FBFF" if row_index % 2 == 0 else "#FFFFFF")
+        font = header_font if is_header else body_font
+        text_fill = "#FFFFFF" if is_header else "#1F2933"
+        for value, col_width in zip(values, col_widths):
+            draw.rectangle((x, y, x + col_width, y + height), fill=fill, outline="#B8C7D6", width=2)
+            lines = wrap_text(draw, value, font, col_width - 2 * padding_x)
+            line_height = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + line_gap
+            text_y = y + (height - len(lines) * line_height) // 2
+            for line in lines:
+                draw.text((x + padding_x, text_y), line, fill=text_fill, font=font)
+                text_y += line_height
+            x += col_width
+        y += height
+
+    draw.rectangle((margin_x, margin_x, image_width - margin_x, image_height - margin_x), outline="#8AA6BF", width=3)
+    img.save(output_path)
+
     paragraph = document.add_paragraph()
+    paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = paragraph.add_run()
+    run.add_picture(str(output_path), width=Inches(6.75))
     paragraph.paragraph_format.space_before = Pt(4)
-    paragraph.paragraph_format.space_after = Pt(4)
-    run = paragraph.add_run(header)
-    run.bold = True
-    run.font.color.rgb = DARK
-    run.font.size = Pt(9.5)
-
-    separator = " | ".join(["-" * min(max(len(item), 6), 24) for item in headers])
-    paragraph = document.add_paragraph()
-    paragraph.paragraph_format.space_after = Pt(2)
-    run = paragraph.add_run(separator)
-    run.font.name = "Courier New"
-    run.font.size = Pt(8.5)
-
-    for row in rows:
-        paragraph = document.add_paragraph()
-        paragraph.paragraph_format.left_indent = Inches(0.12)
-        paragraph.paragraph_format.space_after = Pt(2)
-        run = paragraph.add_run(" | ".join(row))
-        run.font.size = Pt(9)
-    document.add_paragraph()
-    return None
+    paragraph.paragraph_format.space_after = Pt(8)
+    return output_path
 
 
 def add_heading(document: Document, text: str, level: int = 1) -> None:
@@ -327,6 +471,13 @@ def add_methodology(document: Document) -> None:
         "search, and passed to FLAN-T5 for generation. Multi-agent components separate literature review, "
         "research gap, technical explanation, and guardrail responsibilities.",
     )
+    flowchart_path = create_flowchart_image()
+    figure = document.add_paragraph()
+    figure.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    figure.add_run().add_picture(str(flowchart_path), width=Inches(6.75))
+    caption = document.add_paragraph("Figure 1: End-to-end ScholarSynth AI workflow.")
+    caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    caption.paragraph_format.space_after = Pt(8)
     add_table(
         document,
         ["Stage", "Description"],
