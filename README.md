@@ -4,6 +4,10 @@ ScholarSynth AI is an autonomous research assistant for research paper explorati
 
 The system retrieves papers from arXiv and Semantic Scholar, preprocesses academic text, stores metadata in SQLite, stores embeddings in ChromaDB, and evaluates baseline generation strategies before PEFT fine-tuning.
 
+## Architecture Overview
+
+![ScholarSynth AI architecture](report/scholarsynth_architecture.png)
+
 ## Current Tech Stack
 
 - Baseline model: `google/flan-t5-base`
