@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import io
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from src.agents import GuardrailAgent, LiteratureReviewAgent, ResearchGapAgent, TechnicalExplainerAgent
+from src.agents import GuardrailAgent
 from src.paper_search import collect_papers_for_topic
 from src.preprocessing import preprocess_papers
 from src.rag_pipeline import RagGenerator
@@ -34,15 +35,30 @@ TASK_TO_FINETUNE_TASK = {
 }
 
 TASK_TO_INSTRUCTION = {
-    "Literature Review": "Generate a short literature review using the provided papers and retrieved evidence.",
-    "Research Gap Analysis": "Identify research gaps using the provided papers and retrieved evidence.",
-    "Technical Explanation": "Explain the technical concept in simple terms using the provided papers and retrieved evidence.",
+    "Literature Review": "Write a readable mini literature review using the uploaded paper, user question, and retrieved evidence.",
+    "Research Gap Analysis": "Identify research gaps using the uploaded paper, user question, and retrieved evidence.",
+    "Technical Explanation": "Explain the technical concept in simple terms using the uploaded paper, user question, and retrieved evidence.",
 }
 
 MODEL_OPTIONS = {
     "Base FLAN-T5": "base",
     "Fine-tuned LoRA": "lora",
     "RAG + Fine-tuned LoRA": "rag_lora",
+}
+
+DETAIL_OPTIONS = {
+    "Standard": {
+        "tokens": 260,
+        "instruction": "Write 2-3 short paragraphs. Use clear academic language.",
+    },
+    "Detailed": {
+        "tokens": 420,
+        "instruction": "Write 4-6 readable paragraphs with short section headings and concrete takeaways.",
+    },
+    "Report Style": {
+        "tokens": 560,
+        "instruction": "Write a structured report with sections: Overview, Evidence, Key Points, Limitations, and Next Steps.",
+    },
 }
 
 
@@ -227,30 +243,145 @@ def render_guardrail_findings(findings, title: str = "Guardrail checks") -> None
                 st.info(finding.message)
 
 
+def extract_uploaded_text(uploaded_file) -> str:
+    if uploaded_file is None:
+        return ""
+
+    suffix = Path(uploaded_file.name).suffix.lower()
+    raw_bytes = uploaded_file.getvalue()
+
+    if suffix in {".txt", ".md"}:
+        return raw_bytes.decode("utf-8", errors="ignore")
+
+    if suffix == ".csv":
+        df = pd.read_csv(io.BytesIO(raw_bytes))
+        preview_columns = [column for column in ["title", "abstract", "chunk_text", "text"] if column in df.columns]
+        if preview_columns:
+            return "\n\n".join(df[preview_columns].fillna("").astype(str).head(20).agg(" ".join, axis=1))
+        return df.fillna("").astype(str).head(20).to_csv(index=False)
+
+    if suffix == ".pdf":
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            try:
+                from PyPDF2 import PdfReader
+            except ImportError:
+                return (
+                    "PDF upload detected, but no PDF parser is installed. "
+                    "Install pypdf or upload a .txt/.md version of the paper."
+                )
+
+        reader = PdfReader(io.BytesIO(raw_bytes))
+        pages = []
+        for page in reader.pages[:8]:
+            pages.append(page.extract_text() or "")
+        return "\n\n".join(pages)
+
+    return raw_bytes.decode("utf-8", errors="ignore")
+
+
+def infer_topic_from_uploaded_text(uploaded_text: str, fallback_query: str) -> str:
+    if not uploaded_text.strip():
+        return fallback_query
+
+    for line in uploaded_text.splitlines()[:20]:
+        cleaned = " ".join(line.split())
+        if 8 <= len(cleaned) <= 180 and not cleaned.lower().startswith(("abstract", "keywords")):
+            return cleaned
+    return fallback_query
+
+
+def build_base_prompt(task: str, user_query: str, docs: list[str], metas: list[dict], uploaded_text: str, detail: str) -> str:
+    evidence_lines = [
+        f"Paper {index}: {meta.get('title', 'Untitled')}. Evidence: {doc[:600]}"
+        for index, (doc, meta) in enumerate(zip(docs, metas), start=1)
+    ]
+    uploaded_section = f"\nUploaded paper excerpt:\n{uploaded_text[:1400]}\n" if uploaded_text.strip() else ""
+    return (
+        "You are ScholarSynth AI, a careful academic research assistant. "
+        "Write a useful, readable answer grounded in the user query, uploaded paper if provided, and retrieved evidence. "
+        "Do not invent citations, metrics, datasets, or paper details. If evidence is limited, say so.\n\n"
+        f"Task: {task}\n"
+        f"Question or topic: {user_query}\n"
+        f"Output requirements: {DETAIL_OPTIONS[detail]['instruction']}\n"
+        f"{uploaded_section}\n"
+        "Retrieved evidence:\n"
+        + "\n".join(evidence_lines)[:2200]
+        + "\n\nAnswer:"
+    )
+
+
 def build_finetuned_prompt(
     task: str,
     user_query: str,
     docs: list[str],
     metas: list[dict],
     include_retrieval: bool,
+    uploaded_text: str = "",
+    detail: str = "Detailed",
 ) -> str:
     evidence_lines = []
     if include_retrieval:
         for index, (doc, meta) in enumerate(zip(docs, metas), start=1):
-            evidence_lines.append(f"Paper {index}: {meta.get('title', 'Untitled')}. Abstract: {doc}")
+            evidence_lines.append(f"Paper {index}: {meta.get('title', 'Untitled')}. Evidence: {doc[:600]}")
+
+    uploaded_section = ""
+    if uploaded_text.strip():
+        uploaded_section = f"\nUploaded paper excerpt:\n{uploaded_text[:1400]}\n"
 
     if evidence_lines:
-        input_text = f"User question: {user_query}\n\nRetrieved evidence:\n" + "\n".join(evidence_lines)
+        input_text = (
+            f"User question: {user_query}\n"
+            f"{uploaded_section}\n"
+            "Retrieved evidence:\n"
+            + "\n".join(evidence_lines)
+        )
     else:
-        input_text = f"User question: {user_query}"
+        input_text = f"User question: {user_query}\n{uploaded_section}"
 
     return (
         f"Instruction: {TASK_TO_INSTRUCTION[task]}\n"
         f"Task: {TASK_TO_FINETUNE_TASK[task]}\n"
         f"Topic: {user_query}\n"
-        f"Input:\n{input_text[:2200]}\n\n"
+        f"Output requirements: {DETAIL_OPTIONS[detail]['instruction']}\n"
+        "Required answer format:\n"
+        "Overview: explain the main idea in plain language.\n"
+        "Evidence: connect the answer to the uploaded paper or retrieved papers.\n"
+        "Key points: list the most important takeaways.\n"
+        "Limitations or gaps: mention uncertainty or missing evidence.\n"
+        f"Input:\n{input_text[:3200]}\n\n"
         "Answer:"
     )
+
+
+def expand_short_answer(
+    task: str,
+    user_query: str,
+    generated_text: str,
+    docs: list[str],
+    metas: list[dict],
+    uploaded_text: str,
+) -> str:
+    if len(generated_text.split()) >= 90:
+        return generated_text
+
+    evidence_title = metas[0].get("title", "the retrieved papers") if metas else "the retrieved papers"
+    evidence_note = docs[0][:320] if docs else "Retrieved evidence was limited."
+    uploaded_note = uploaded_text[:320] if uploaded_text.strip() else ""
+
+    sections = [
+        f"### Overview\n{generated_text}",
+        f"### Evidence Used\nThe answer is grounded mainly in `{evidence_title}` and related retrieved paper chunks.",
+        f"### What This Means\nFor the task `{task}`, the system is trying to connect the topic `{user_query}` with evidence from the local research corpus.",
+        f"### Supporting Context\n{evidence_note}",
+    ]
+    if uploaded_note:
+        sections.append(f"### Uploaded Paper Context\n{uploaded_note}")
+    sections.append(
+        "### Limitation\nThe local fine-tuned FLAN-T5 LoRA model can produce awkward phrasing, so the retrieved evidence tab should be checked before trusting the answer."
+    )
+    return "\n\n".join(sections)
 
 
 @st.cache_resource
@@ -409,10 +540,35 @@ else:
         help="Ask a focused academic question. The answer will be based on retrieved paper chunks.",
     )
 
+    uploaded_file = st.file_uploader(
+        "Optional: upload your paper or notes",
+        type=["txt", "md", "csv", "pdf"],
+        help="Upload a paper excerpt, notes, CSV, or PDF. The app uses it as extra context for the selected task.",
+    )
+    uploaded_text = extract_uploaded_text(uploaded_file)
+    if uploaded_file is not None:
+        if uploaded_text.startswith("PDF upload detected"):
+            st.warning(uploaded_text)
+            uploaded_text = ""
+        elif uploaded_text.strip():
+            inferred_topic = infer_topic_from_uploaded_text(uploaded_text, user_query)
+            st.success(f"Loaded uploaded context from {uploaded_file.name}.")
+            with st.expander("Preview uploaded context", expanded=False):
+                st.caption(f"Auto-detected topic/title: {inferred_topic}")
+                st.write(uploaded_text[:2200])
+
+    detail = st.select_slider(
+        "Answer detail",
+        options=list(DETAIL_OPTIONS.keys()),
+        value="Detailed",
+        help="Use Detailed or Report Style when you want a longer, easier-to-read answer.",
+    )
+
     top_k = st.slider("Retrieved evidence chunks", min_value=3, max_value=10, value=5, step=1)
 
     if st.button("Generate Grounded Output", type="primary", use_container_width=True):
-        query_check = guardrail.validate_query(user_query)
+        retrieval_query = infer_topic_from_uploaded_text(uploaded_text, user_query)
+        query_check = guardrail.validate_query(retrieval_query)
         if not query_check.passed:
             render_guardrail_findings(query_check.findings, "Input guardrail checks")
         else:
@@ -421,7 +577,7 @@ else:
                 with st.spinner("Retrieving evidence and generating answer..."):
                     embedding_model = get_embedding_model()
                     vector_store = get_vector_store()
-                    retrieval_results = vector_store.semantic_search(user_query, embedding_model, top_k=top_k)
+                    retrieval_results = vector_store.semantic_search(retrieval_query, embedding_model, top_k=top_k)
                     docs = retrieval_results.get("documents", [[]])[0]
                     metas = retrieval_results.get("metadatas", [[]])[0]
                     if not docs:
@@ -429,26 +585,36 @@ else:
                     else:
                         if model_mode == "base":
                             generator = get_generator()
-
-                            if task == "Literature Review":
-                                agent = LiteratureReviewAgent(generator)
-                            elif task == "Research Gap Analysis":
-                                agent = ResearchGapAgent(generator)
-                            else:
-                                agent = TechnicalExplainerAgent(generator)
-
-                            response = agent.run(user_query, retrieval_results)
-                            generated_text = response.content
+                            prompt = build_base_prompt(
+                                task=task,
+                                user_query=retrieval_query,
+                                docs=docs,
+                                metas=metas,
+                                uploaded_text=uploaded_text,
+                                detail=detail,
+                            )
+                            generated_text = generator.generate(prompt, max_new_tokens=DETAIL_OPTIONS[detail]["tokens"])
                         else:
                             generator = get_lora_generator()
                             prompt = build_finetuned_prompt(
                                 task=task,
-                                user_query=user_query,
+                                user_query=retrieval_query,
                                 docs=docs,
                                 metas=metas,
                                 include_retrieval=model_mode == "rag_lora",
+                                uploaded_text=uploaded_text,
+                                detail=detail,
                             )
-                            generated_text = generator.generate(prompt, max_new_tokens=180)
+                            generated_text = generator.generate(prompt, max_new_tokens=DETAIL_OPTIONS[detail]["tokens"])
+
+                        generated_text = expand_short_answer(
+                            task=task,
+                            user_query=retrieval_query,
+                            generated_text=generated_text,
+                            docs=docs,
+                            metas=metas,
+                            uploaded_text=uploaded_text,
+                        )
 
                         evidence_titles = [meta.get("title", "") for meta in metas]
                         output_check = guardrail.validate_output(

@@ -30,9 +30,10 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 11. 200-example baseline evaluation completed across `pretrained`, `prompt_engineered`, `rag_system`, and `fine_tuned_lora`.
 12. 1,200-example LoRA test generation and metrics files added under `outputs/`.
 13. Qualitative error analysis and guardrail reports generated in `outputs/error_analysis.md`.
-14. LoRA adapter files are present under `models/flan_t5_lora/`.
-15. Streamlit app UI redesigned with light/dark theme support, dataset status cards, LoRA generator selection, safer index controls, output/evidence tabs, and guardrail warnings.
-16. Project Jupyter kernel registered as `Gen AI Research Assistant (.venv)`.
+14. RAG + LoRA generation artifacts saved with retrieved titles/chunks in `outputs/rag_plus_lora_200_generations.csv`.
+15. LoRA adapter files are present under `models/flan_t5_lora/`.
+16. Streamlit app UI redesigned with light/dark theme support, dataset status cards, LoRA generator selection, safer index controls, output/evidence tabs, and guardrail warnings.
+17. Project Jupyter kernel registered as `Gen AI Research Assistant (.venv)`.
 
 ## Current Dataset Status
 
@@ -81,13 +82,24 @@ Results are saved in:
 - `outputs/baseline_200_comparison.md`
 - `outputs/lora_test_metrics.csv`
 - `outputs/lora_test_generations.csv`
+- `outputs/lora_test_best_cases.csv`
+- `outputs/lora_test_worst_cases.csv`
 - `outputs/error_analysis.md`
+- `outputs/error_analysis_cases.csv`
+- `outputs/error_analysis_failure_summary.csv`
+- `outputs/error_analysis_guardrail_summary.csv`
+- `outputs/rag_plus_lora_200_generations.csv`
+- `outputs/rag_plus_lora_200_metrics.csv`
+- `outputs/rag_plus_lora_200_task_metrics.csv`
+- `outputs/rag_plus_lora_200_summary.json`
+- `outputs/rag_plus_lora_200_retrieval_cache.json`
 
 ### Aggregate Comparison Table
 
 | Model | Eval Examples | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | fine_tuned_lora | 200 | 29.0810 | 0.5131 | 0.3699 | 0.4376 |
+| rag_plus_lora | 200 | 22.3723 | 0.4296 | 0.2673 | 0.3621 |
 | pretrained | 200 | 0.3151 | 0.1679 | 0.0820 | 0.1363 |
 | rag_system | 200 | 0.1292 | 0.1458 | 0.0816 | 0.1294 |
 | prompt_engineered | 200 | 0.0005 | 0.1026 | 0.0594 | 0.0964 |
@@ -98,30 +110,66 @@ Separate 1,200-example LoRA test:
 | --- | ---: | ---: | ---: | ---: | ---: |
 | fine_tuned_lora | 1200 | 47.2745 | 0.6561 | 0.5404 | 0.6031 |
 
+### RAG + LoRA Generation Artifacts
+
+`outputs/rag_plus_lora_200_generations.csv` contains 200 saved `rag_plus_lora` generations with retrieved titles and retrieved chunks. This makes the hallucination and grounding analysis stronger than the LoRA-only generation file, which only contains references and predictions.
+
+### Error Analysis Summary
+
+Guardrail findings on the 1,200-example LoRA test generations:
+
+| Finding | Count |
+| --- | ---: |
+| No retrieved evidence was supplied to the output guardrail; hallucination checks are limited. | 1200 |
+| The answer uses strong quantitative or comparative language without an explicit citation. | 65 |
+
+Guardrail findings on the 200-example RAG + LoRA generations:
+
+| Finding | Count |
+| --- | ---: |
+| Weak lexical overlap with retrieved evidence | 40 |
+| Repetitive wording detected | 6 |
+| Strong unsupported quantitative/comparative language | 5 |
+
+Failure proxy counts on the 200-example RAG + LoRA generations:
+
+| Failure Type | Count |
+| --- | ---: |
+| low_bleu | 105 |
+| low_rougeL | 90 |
+| no_major_proxy_failure | 78 |
+| weak_evidence_overlap | 40 |
+| repetition | 6 |
+| hallucination_risk | 5 |
+
 Interpretation:
 
 - `fine_tuned_lora` is now the strongest saved model on the 200-example comparison.
+- `rag_plus_lora` is second overall and is the best candidate for evidence-grounded demo outputs because its generation file includes retrieved titles/chunks.
 - The largest LoRA gains are on `evidence_based_qa`, `technical_explanation`, and `paper_summary`.
 - `comparative_analysis`, `literature_review`, and `research_gap_analysis` remain harder tasks.
-- RAG still matters for evidence grounding and citation-style outputs, but the current saved comparison does not yet include `rag_plus_lora`.
+- RAG + LoRA is strongest on `evidence_based_qa`, but retrieval can reduce lexical overlap on some synthesis tasks because the generated wording shifts toward retrieved evidence.
 
 ### Baseline Metrics Chart
 
 ```text
 ROUGE-L
 fine_tuned_lora    0.4376 | ████████████████████████████
+rag_plus_lora      0.3621 | ███████████████████████
 pretrained         0.1363 | █████████
 rag_system         0.1294 | ████████
 prompt_engineered  0.0964 | ██████
 
 ROUGE-1
 fine_tuned_lora    0.5131 | ████████████████████████████
+rag_plus_lora      0.4296 | ███████████████████████
 pretrained         0.1679 | █████████
 rag_system         0.1458 | ████████
 prompt_engineered  0.1026 | ██████
 
 BLEU
 fine_tuned_lora   29.0810 | ████████████████████████████
+rag_plus_lora     22.3723 | ██████████████████████
 pretrained         0.3151 | █
 rag_system         0.1292 | █
 prompt_engineered  0.0005 | █
@@ -144,8 +192,9 @@ The LoRA adapter has been evaluated in two ways:
 
 - 200-example comparison against `pretrained`, `prompt_engineered`, and `rag_system`
 - 1,200-example LoRA-only test using `outputs/lora_test_generations.csv`
+- 200-example `rag_plus_lora` evaluation using retrieved Chroma evidence and the trained LoRA adapter
 
-The next useful evaluation upgrade is to add `rag_plus_lora` generations on the same 200-example split.
+The next useful evaluation upgrade is prompt tuning for `rag_plus_lora`, especially on comparative analysis and research-gap tasks.
 
 ## Streamlit App Changes
 
@@ -158,8 +207,6 @@ The next useful evaluation upgrade is to add `rag_plus_lora` generations on the 
 - Generator selector for `Base FLAN-T5`, `Fine-tuned LoRA`, and `RAG + Fine-tuned LoRA`
 - Safer dataset/index management inside an expander
 - Input and output guardrail warnings/errors shown in expandable panels
-
-
 
 ## Project Layout
 
@@ -204,4 +251,3 @@ project/
 ├── requirements.txt
 └── README.md
 ```
-
