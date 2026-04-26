@@ -8,7 +8,7 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 
 - Baseline model: `google/flan-t5-base`
 - Prompt-engineered baseline: `google/flan-t5-base`
-- Planned fine-tuned model: `google/flan-t5-base` with LoRA
+- Fine-tuned model: `google/flan-t5-base` with LoRA adapter
 - Embedding model: `sentence-transformers/all-MiniLM-L6-v2`
 - Vector DB: `ChromaDB`
 - Metadata DB: `SQLite`
@@ -29,6 +29,9 @@ The system retrieves papers from arXiv and Semantic Scholar, preprocesses academ
 10. Baseline evaluation module created in `src/baseline_eval.py`.
 11. 200-example baseline evaluation completed.
 12. Generated baseline evaluation outputs are saved under `outputs/`.
+13. LoRA adapter files are present under `models/flan_t5_lora/`.
+14. Streamlit app UI redesigned with light/dark theme support, dataset status cards, safer index controls, and output/evidence tabs.
+15. Project Jupyter kernel registered as `Gen AI Research Assistant (.venv)`.
 
 ## Current Dataset Status
 
@@ -90,29 +93,59 @@ Interpretation:
 - RAG still provides useful retrieved evidence and is important for grounded answers, citations, and hallucination reduction.
 - These are baseline results before LoRA fine-tuning. Final improvement should be measured after adding `fine_tuned_lora` and `rag_plus_lora`.
 
-## Important Artifacts
+### Baseline Metrics Chart
 
 ```text
-data/raw_papers.csv
-data/processed_papers.csv
-data/train.csv
-data/val.csv
-data/test.csv
-data/finetune_dataset.jsonl
-data/finetune_train.jsonl
-data/finetune_val.jsonl
-data/finetune_test.jsonl
-data/papers.db
-data/chroma/
-outputs/retrieval_examples.csv
-outputs/baseline_200_eval_data.csv
-outputs/baseline_200_comparison.md
-outputs/baseline_200_comparison_table.csv
-outputs/baseline_200_metrics.csv
-outputs/baseline_200_generations.csv
+BERTScore F1
+pretrained         0.7849 | ██████████████████████████████
+rag_system         0.7632 | █████████████████████████████
+prompt_engineered  0.7537 | ████████████████████████████
+
+ROUGE-L
+pretrained         0.1675 | ██████████████████████████████
+rag_system         0.1355 | ████████████████████████
+prompt_engineered  0.1200 | █████████████████████
+
+ROUGE-2
+pretrained         0.1011 | ██████████████████████████████
+rag_system         0.0749 | ██████████████████████
+prompt_engineered  0.0727 | █████████████████████
 ```
 
-Note: generated data, databases, model artifacts, and vector indexes are ignored by `.gitignore` to avoid committing large files.
+## Fine-Tuned LoRA Status
+
+The LoRA adapter exists locally:
+
+```text
+models/flan_t5_lora/adapter_config.json
+models/flan_t5_lora/adapter_model.safetensors
+models/flan_t5_lora/tokenizer.json
+models/flan_t5_lora/tokenizer_config.json
+```
+
+Notebook `notebooks/04_peft_finetuning_colab.ipynb` is the Colab-oriented training notebook. It installs dependencies, mounts Google Drive, loads the fine-tuning JSONL files, configures LoRA, trains `google/flan-t5-base`, and saves the adapter.
+
+Notebook `notebooks/07_finetuned_lora_comparison.ipynb` is intended to compare:
+
+- `pretrained`
+- `prompt_engineered`
+- `rag_system`
+- `fine_tuned_lora`
+- `rag_plus_lora`
+
+The LoRA adapter is present, but final full LoRA comparison outputs should be regenerated and saved before the final report.
+
+## Streamlit App Changes
+
+`app.py` now provides a more user-friendly demo interface:
+
+- Light/dark mode selector in the sidebar
+- Dataset status indicators for raw papers, processed chunks, SQLite, and Chroma
+- Hero section for ScholarSynth AI
+- Status cards for raw papers, text chunks, vector chunks, and generator
+- Safer dataset/index management inside an expander
+
+
 
 ## Project Layout
 
@@ -134,10 +167,10 @@ project/
 │   ├── 01_data_collection.ipynb
 │   ├── 02_vector_database.ipynb
 │   ├── 03_baseline_comparison.ipynb
-│   ├── 04_peft_finetuning.ipynb
 │   ├── 04_peft_finetuning_colab.ipynb
 │   ├── 05_evalute_baseline.ipynb
-│   └── 06_large_data_collection_5000.ipynb
+│   ├── 06_large_data_collection_5000.ipynb
+│   └── 07_finetuned_lora_comparison.ipynb
 ├── src/
 │   ├── paper_search.py
 │   ├── preprocessing.py
@@ -145,92 +178,16 @@ project/
 │   ├── rag_pipeline.py
 │   ├── agents.py
 │   ├── evaluation.py
-│   └── baseline_eval.py
+│   ├── baseline_eval.py
+│   ├── large_data_collection.py
+│   └── topic_bank.py
 ├── outputs/
+├── models/
+│   └── flan_t5_lora/
 ├── report/
 ├── app.py
 ├── requirements.txt
 └── README.md
 ```
 
-## Setup
 
-```bash
-cd "/Users/Lenovo/Desktop/sem 6/Gen_AI Project"
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-If using VS Code notebooks, select this interpreter:
-
-```text
-/Users/Lenovo/Desktop/sem 6/Gen_AI Project/.venv/bin/python
-```
-
-## Useful Commands
-
-Check core files:
-
-```bash
-ls -lh data outputs notebooks src
-```
-
-Compile Python files:
-
-```bash
-python -m compileall src app.py
-```
-
-Check dataset counts:
-
-```bash
-wc -l data/raw_papers.csv data/processed_papers.csv data/train.csv data/val.csv data/test.csv data/finetune_dataset.jsonl data/finetune_train.jsonl data/finetune_val.jsonl data/finetune_test.jsonl
-```
-
-Run Streamlit app:
-
-```bash
-streamlit run app.py
-```
-
-Run the 200-example baseline evaluation from Python:
-
-```bash
-python -c "from src.baseline_eval import run_baseline_evaluation; metrics, aggregate, generations = run_baseline_evaluation(sample_size=200); print(aggregate.round(4).to_string(index=False))"
-```
-
-Execute the baseline evaluation notebook and save outputs into the notebook:
-
-```bash
-python -m jupyter nbconvert --to notebook --execute --inplace notebooks/05_evalute_baseline.ipynb --ExecutePreprocessor.timeout=3600
-```
-
-## Next Steps
-
-1. Replace `notebooks/04_peft_finetuning.ipynb` with a Colab-ready LoRA fine-tuning notebook.
-2. Fine-tune `google/flan-t5-base` using:
-   - `data/finetune_train.jsonl`
-   - `data/finetune_val.jsonl`
-3. Save the LoRA adapter to:
-
-```text
-models/flan_t5_lora/
-```
-
-4. Add final evaluation for:
-   - `fine_tuned_lora`
-   - `rag_plus_lora`
-5. Update the report with:
-   - baseline comparison
-   - LoRA fine-tuning justification
-   - quantitative metric table
-   - qualitative/error analysis
-   - hallucination and guardrail cases
-
-## Notes for the Next Developer
-
-- Prefer running PEFT fine-tuning in Google Colab with GPU.
-- Keep the local MacBook workflow for data processing, ChromaDB, SQLite, retrieval testing, and Streamlit.
-- The current baseline scores are not expected to prove final improvement yet. They are pre-fine-tuning baselines.
-- The final improvement story should compare `pretrained`, `prompt_engineered`, and `rag_system` against `fine_tuned_lora` and `rag_plus_lora`.
