@@ -181,6 +181,20 @@ def apply_theme(theme: str) -> None:
             border-color: var(--app-line);
             background: color-mix(in srgb, var(--app-panel) 70%, transparent);
         }}
+        .stMarkdown h3 {{
+            font-size: 1.2rem;
+            line-height: 1.25;
+            margin-top: 1rem;
+            margin-bottom: .4rem;
+        }}
+        .stMarkdown p, .stMarkdown li {{
+            font-size: 1rem;
+            line-height: 1.48;
+        }}
+        .stMarkdown ul {{
+            margin-top: .25rem;
+            margin-bottom: .9rem;
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -418,13 +432,72 @@ def extract_readable_sentences(text: str, limit: int = 3) -> list[str]:
     return readable
 
 
+def markdown_list(items: list[str]) -> str:
+    clean_items = [" ".join(item.split()) for item in items if item and item.strip()]
+    return "\n".join(f"- {item}" for item in clean_items)
+
+
+def section(title: str, items: list[str] | str) -> str:
+    if isinstance(items, str):
+        body = items.strip()
+    else:
+        body = markdown_list(items)
+    return f"### {title}\n\n{body.strip()}"
+
+
+def model_draft_section(model_draft: str) -> str:
+    sentences = extract_readable_sentences(model_draft, limit=3)
+    if not sentences:
+        return ""
+    return "\n\n" + section("Model Draft Insight", sentences)
+
+
+def format_answer_pointwise(text: str) -> str:
+    """Normalize generated markdown so Streamlit displays compact point-wise sections."""
+    normalized = text.replace("\r\n", "\n").strip()
+    if not normalized:
+        return normalized
+
+    # Ensure headings are on their own lines even if model text joined them inline.
+    normalized = re.sub(r"\s*(#{2,3}\s+)", r"\n\n\1", normalized)
+    normalized = re.sub(r"(?<!\n)\s+-\s+", "\n- ", normalized)
+
+    chunks = re.split(r"\n\s*###\s+", normalized)
+    intro = chunks[0].strip()
+    sections = []
+    if intro and not intro.startswith("###"):
+        sections.append(intro)
+
+    for chunk in chunks[1:]:
+        lines = chunk.strip().splitlines()
+        if not lines:
+            continue
+        title = lines[0].strip()
+        body = " ".join(line.strip() for line in lines[1:] if line.strip())
+        existing_bullets = re.findall(r"(?:^|\s)-\s+(.+?)(?=\s+-\s+|$)", body)
+        if existing_bullets:
+            bullets = [bullet.strip() for bullet in existing_bullets if bullet.strip()]
+        else:
+            bullets = [
+                sentence.strip()
+                for sentence in re.split(r"(?<=[.!?])\s+", body)
+                if sentence.strip()
+            ]
+        if bullets:
+            sections.append(section(title, bullets))
+        else:
+            sections.append(f"### {title}")
+
+    return "\n\n".join(sections)
+
+
 def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str, list[str]]:
     query = user_query.lower()
 
     if "lora" in query or "low-rank" in query:
         return (
             f"LoRA fine-tuning adapts a transformer by training small low-rank adapter weights instead of updating the full model. "
-            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`, which connects LoRA-style adaptation to efficient and calibrated model fine-tuning.",
+            f"For {user_query}, the most relevant retrieved source is {primary_title}, which connects LoRA-style adaptation to efficient and calibrated model fine-tuning.",
             [
                 "LoRA reduces training cost because only a small number of adapter parameters are updated.",
                 "The base transformer remains mostly frozen, which makes fine-tuning faster and easier to store.",
@@ -435,7 +508,7 @@ def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str
     if "instruction" in query or "tuning" in query or "sft" in query:
         return (
             f"Instruction tuning adapts a language model with examples of instructions and desired answers, so it learns to follow user requests more reliably. "
-            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            f"For {user_query}, the most relevant retrieved source is {primary_title}.",
             [
                 "It is usually a supervised fine-tuning step using instruction-response pairs.",
                 "It helps a base model become more useful for assistant-style tasks such as explanation, summarization, and question answering.",
@@ -446,7 +519,7 @@ def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str
     if "hallucination" in query or "factuality" in query or "faithfulness" in query:
         return (
             f"Factuality and hallucination research studies whether model outputs are supported by evidence. "
-            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            f"For {user_query}, the most relevant retrieved source is {primary_title}.",
             [
                 "A hallucination happens when a model states information that is not supported by the source or evidence.",
                 "Factuality evaluation checks whether generated claims match retrieved documents, references, or known facts.",
@@ -457,7 +530,7 @@ def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str
     if "rag" in query or "retrieval" in query or "augmented generation" in query:
         return (
             f"Retrieval-augmented generation combines search with generation: the system first retrieves relevant documents, then uses them as context for the answer. "
-            f"For `{user_query}`, the strongest retrieved signal comes from `{primary_title}`.",
+            f"For {user_query}, the strongest retrieved signal comes from {primary_title}.",
             [
                 "Retrieval helps ground answers in external evidence instead of relying only on model memory.",
                 "The quality of the answer depends on both retrieval relevance and the generator's ability to use the evidence.",
@@ -468,7 +541,7 @@ def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str
     if "embedding" in query or "vector" in query or "semantic search" in query:
         return (
             f"Semantic search represents text as embeddings and retrieves documents with similar meaning, not just matching keywords. "
-            f"For `{user_query}`, the most relevant retrieved source is `{primary_title}`.",
+            f"For {user_query}, the most relevant retrieved source is {primary_title}.",
             [
                 "Embeddings turn papers, abstracts, or chunks into numeric vectors.",
                 "A vector database such as ChromaDB can quickly find nearby chunks for a user query.",
@@ -477,7 +550,7 @@ def topic_specific_explanation(user_query: str, primary_title: str) -> tuple[str
         )
 
     return (
-        f"The topic `{user_query}` is connected to the retrieved research evidence, especially `{primary_title}`. "
+        f"The topic {user_query} is connected to the retrieved research evidence, especially {primary_title}. "
         "The answer below summarizes the main idea using the local paper corpus.",
         [
             "The retrieved papers provide context for the selected research task.",
@@ -568,21 +641,21 @@ def build_chunk_grounded_answer(
 
     model_note = ""
     if model_draft.strip() and not has_low_fluency(model_draft) and len(model_draft.split()) >= 20:
-        model_note = f"\n\n### Model Draft Insight\n{model_draft.strip()}"
+        model_note = model_draft_section(model_draft)
 
     title_bullets = "\n".join(f"- {title}" for title in supporting_titles if title)
-    evidence_bullets = "\n".join(f"- {sentence}" for sentence in evidence_sentences)
+    evidence_bullets = markdown_list(evidence_sentences)
 
     if task == "Technical Explanation":
         overview, key_points = topic_specific_explanation(user_query, primary_title)
-        key_point_bullets = "\n".join(f"- {point}" for point in key_points)
+        key_point_bullets = markdown_list(key_points)
         return (
-            f"### Overview\n{overview}\n\n"
-            f"### Explanation From Retrieved Chunks\n{evidence_bullets}\n\n"
-            f"### Key Retrieved Papers\n{title_bullets}\n\n"
-            f"### Key Takeaways\n{key_point_bullets}"
+            f"{section('Overview', [overview])}\n\n"
+            f"{section('Explanation From Retrieved Chunks', evidence_sentences)}\n\n"
+            f"{section('Key Retrieved Papers', supporting_titles)}\n\n"
+            f"{section('Key Takeaways', key_points)}"
             f"{model_note}\n\n"
-            f"### Reliability Note\nThis answer is built from retrieved ChromaDB chunks first. The selected generator was `{model_label}`, but retrieved evidence is used as the main source."
+            f"{section('Reliability Note', [f'This answer is built from retrieved ChromaDB chunks first. The selected generator was {model_label}, but retrieved evidence is used as the main source.'])}"
         )
 
     if task == "Research Gap Analysis":
@@ -592,14 +665,13 @@ def build_chunk_grounded_answer(
             "Comparisons between baseline prompting, fine-tuned LoRA, RAG, and RAG plus LoRA should be reported consistently.",
             "Failure cases such as repetition, weak evidence overlap, and noisy generation should be manually reviewed.",
         ]
-        gap_bullets = "\n".join(f"- {point}" for point in gap_points)
         return (
-            f"### Evidence Base\nThe retrieved chunks for `{user_query}` are mainly connected to `{primary_title}` and related papers.\n\n"
-            f"### What The Retrieved Chunks Say\n{evidence_bullets}\n\n"
-            f"### Likely Research Gaps\n{gap_bullets}\n\n"
-            f"### Key Retrieved Papers\n{title_bullets}"
+            f"{section('Evidence Base', [f'The retrieved chunks for {user_query} are mainly connected to {primary_title} and related papers.'])}\n\n"
+            f"{section('What The Retrieved Chunks Say', evidence_sentences)}\n\n"
+            f"{section('Likely Research Gaps', gap_points)}\n\n"
+            f"{section('Key Retrieved Papers', supporting_titles)}"
             f"{model_note}\n\n"
-            f"### Reliability Note\nThese gaps are inferred from retrieved chunks and should be validated by reading the full papers."
+            f"{section('Reliability Note', ['These gaps are inferred from retrieved chunks and should be validated by reading the full papers.'])}"
         )
 
     themes = [
@@ -608,14 +680,13 @@ def build_chunk_grounded_answer(
         "Evaluation: automatic metrics are useful, but qualitative review is needed for hallucination and failure cases.",
         "Open issues: fluency, citation quality, and domain-specific reliability remain important limitations.",
     ]
-    theme_bullets = "\n".join(f"- {theme}" for theme in themes)
     return (
-        f"### Literature Review Overview\nThe retrieved literature for `{user_query}` is centered on `{primary_title}` and related work from the local corpus.\n\n"
-        f"### Main Evidence From Retrieved Chunks\n{evidence_bullets}\n\n"
-        f"### Themes Across The Papers\n{theme_bullets}\n\n"
-        f"### Key Retrieved Papers\n{title_bullets}"
+        f"{section('Literature Review Overview', [f'The retrieved literature for {user_query} is centered on {primary_title} and related work from the local corpus.'])}\n\n"
+        f"{section('Main Evidence From Retrieved Chunks', evidence_sentences)}\n\n"
+        f"{section('Themes Across The Papers', themes)}\n\n"
+        f"{section('Key Retrieved Papers', supporting_titles)}"
         f"{model_note}\n\n"
-        f"### Short Conclusion\nOverall, the retrieved papers suggest that this topic is useful for research-assistant systems, but the final answer should remain tied to retrieved evidence rather than unsupported model memory."
+        f"{section('Short Conclusion', ['Overall, the retrieved papers suggest that this topic is useful for research-assistant systems, but the final answer should remain tied to retrieved evidence rather than unsupported model memory.'])}"
     )
 
 
@@ -877,7 +948,7 @@ else:
                             render_guardrail_findings(output_check.findings, "Output guardrail checks")
                             st.markdown("### Answer")
                             with st.container(border=True):
-                                st.markdown(output_check.text)
+                                st.markdown(format_answer_pointwise(output_check.text))
                         with evidence_tab:
                             for index, (doc, meta) in enumerate(zip(docs, metas), start=1):
                                 with st.expander(f"{index}. {meta.get('title', 'Untitled')}", expanded=index == 1):
